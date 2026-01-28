@@ -1,0 +1,6 @@
+*.o
+*.json
+*.lnk
+NoriClock.*
+!NoriClock.mcp
+
