@@ -89,7 +89,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "1.0.0"
+#define FW_VERSION          "1.1.0"
 
 // Customization
 
@@ -105,7 +105,7 @@
 #define F_VFD_SPI_MAX       1500000UL                       // VFD SPI max clock frequency (well within spec)
 #define VFD_RESET_PULSE_US  2000                            // VFD reset pulse duration [us]
 #define VFD_RESET_RECOV_US  5                               // VFD post-reset recovery time [us]
-#define TIMER0_RELOAD_CORR  489                             // Timer 0 reload value correction from DOE
+#define TIMER0_RELOAD_CORR  486                             // Timer 0 reload value correction from DOE
 #define TIMER0_PRESC_DIV    1                               // Timer 0 prescaler divider
 #define TIMER0_PRESC_CFG    T0_PS_1_1                       // Timer 0 prescaler config constant
 
@@ -195,6 +195,7 @@ enum {                                                      // Button actions
 #define VFD_LONG_BLINK      "\x1f(a\x11\x02\x02\x02\x03"    // Three short reverse-flashes
 #define VFD_FLASH_SCR_ON    "\x1f(a\x11\x01\x23\x23\xff"    // Turn on screen-flashing
 #define VFD_FLASH_SCR_OFF   "\x1f(a\x11\xff\x1\x1\xff"      // Turn off screen-flashing
+#define VFD_BRIGHTNESS      "\x1fX"                         // Brightness control
 
 // VFD geometry
 
@@ -450,6 +451,8 @@ void print_clock(void)
 
 void main(void)
 {
+    byte vfd_dim = 0;
+
     // Startup
     init_pic();
     init_vfd();
@@ -480,8 +483,11 @@ void main(void)
         case ISR_SECONDS_UNFROZEN:
             strcpypgm2ram(msg_buff, VFD_FLASH_SCR_OFF);
             break;
-        case ISR_SECOND_PASSED:
         case ISR_REGULAR_PRESS:
+            vfd_dim = !vfd_dim;
+            sprintf(msg_buff, VFD_BRIGHTNESS "%c", vfd_dim ? 4 : 8);
+            break;
+        case ISR_SECOND_PASSED:
         case ISR_SETTING_PRESS:
             *msg_buff = '\0';
             break;
