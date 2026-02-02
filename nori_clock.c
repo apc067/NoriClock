@@ -89,7 +89,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "1.1.0"
+#define FW_VERSION          "1.2.0"
 
 // Customization
 
@@ -150,19 +150,29 @@
 
 // Clock-related definitions
 
-enum {
+enum {                                                      // Clock & config dials
     CLOCK_SECONDS = 0,
     CLOCK_MINUTES,
     CLOCK_HOURS,
     CLOCK_DAY,
     CLOCK_MONTH,
     CLOCK_YEAR,
-    CLOCK_DIALS
+    CONFIG_HR_FORMAT,
+    NUM_ALL_DIALS
 };
 
+#define NUM_CLOCK_DIALS     (CLOCK_YEAR + 1)
 #define NUM_MONTHS          12
 #define MONTH_FEBRUARY      1
 #define YEAR_CENTURY        20
+
+// Configuration-related definitions
+
+enum {                                                      // Hour formats
+    HR_FORMAT_24 = 0,
+    HR_FORMAT_12,
+    NUM_HR_FORMATS
+};
 
 // ISR-related definitions
 
@@ -172,6 +182,8 @@ enum {                                                      // ISR events
     ISR_REGULAR_PRESS,
     ISR_SETTING_PRESS,
     ISR_ENTER_SETTING,
+    ISR_CLOCK_SETTING,
+    ISR_CONFIG_SETTING,
     ISR_EXIT_SETTING,
     ISR_SECONDS_FROZEN,
     ISR_SECONDS_UNFROZEN
@@ -204,7 +216,7 @@ enum {                                                      // Button actions
 
 // Other definitions
 
-#define MSG_BUFF_SIZE       32                              // VFD message buffer size (text + control chars)
+#define MSG_BUFF_SIZE       64                              // VFD message buffer size
 #define DISPLAY_STR_SIZE    20                              // Display field string size for each clock dial
 
 #define IN_SETTING(f)       ((f) != -1)                     // Check if in setting mode
@@ -220,25 +232,30 @@ typedef unsigned int        word;
 volatile byte isr_event = ISR_NONE;                         // ISR event indicator
 volatile byte sec_freeze = 1;                               // Seconds are frozen if adjusted or upon boot
 volatile sbyte selected_field = 0;                          // Display field under setting (-1: not in setting mode)
-volatile byte clock[CLOCK_DIALS] = { 0, 0, 0, 0, 0, 26 };   // THE CLOCK: Seconds, minutes, hours, day, month, year
+volatile byte clock[NUM_ALL_DIALS] = {
+    0, 0, 0, 0, 0, 26,                                      // THE CLOCK: Seconds, minutes, hours, day, month, year
+    HR_FORMAT_24                                            // Config: Hour format
+};
 
 // Other global variables
 
 char msg_buff[MSG_BUFF_SIZE];                               // VFD message buffer
-char display_strings[CLOCK_DIALS][DISPLAY_STR_SIZE];        // Display field strings for each clock dial
+char display_strings[NUM_CLOCK_DIALS][DISPLAY_STR_SIZE];    // Display field strings for each clock dial
 
 // Clock-related lookup tables (mostly read-only)
 
-byte clock_limits[CLOCK_DIALS] = {                          // Limit for each clock dial (with caveat for month)
-    60, 60, 24, 0, 12, 100
+byte clock_limits[NUM_ALL_DIALS] = {                        // Limit for each dial
+    60, 60, 24, 0, 12, 100,                                 // Actual clock dials (with caveat for month)
+    NUM_HR_FORMATS                                          // Config dials
 };
-const rom byte field_to_dial_lut[CLOCK_DIALS] = {           // Display field to clock dial lookup
-    2, 1, 0, 4, 3, 5
+const rom byte field_to_dial_lut[NUM_ALL_DIALS] = {         // Display field to clock dial lookup
+    2, 1, 0, 4, 3, 5,
+    CONFIG_HR_FORMAT
 };
-const rom byte clock_digits[CLOCK_DIALS] = {                // Number of digits to display for each clock dial
+const rom byte clock_digits[NUM_CLOCK_DIALS] = {            // Number of digits to display for each clock dial
     2, 2, 2, 2, 2, 4
 };
-const rom word clock_offsets[CLOCK_DIALS] = {               // Offset to add to each clock dial for display
+const rom word clock_offsets[NUM_CLOCK_DIALS] = {           // Offset to add to each clock dial for display
     0, 0, 0, 1, 1, YEAR_CENTURY * 100
 };
 byte month_lengths[NUM_MONTHS] = {                          // Days in each month (with caveat for February)
@@ -251,6 +268,10 @@ const rom byte month_offsets[2][NUM_MONTHS] = {             // Month offsets for
 const rom char *dow_strings[] = {                           // Day-of-week strings
     "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 };
+
+// Configuration strings
+
+const rom char *hour_formats[] = { "24-hour", "12-hour" };  // Hour format strings
 
 
 //==============================
@@ -411,22 +432,42 @@ void print_clock(void)
     byte field, dial;
     byte col;
     byte cent_year, dow_jan1, dow;
-    char rev_str[4];        // Arguments for "%s" must be in the data memory
-    char unrev_str[4];
+    byte hour;
+    // Arguments for "%s" (must be in the data memory)
+    char rev_str[4], unrev_str[4];
     char dow_str[4];
+    char time_pre_str[4], time_post_str[8];
+
+    // Handle the hour format
+    if (clock[CONFIG_HR_FORMAT] == HR_FORMAT_24) {
+        hour = clock[CLOCK_HOURS];
+        strcpypgm2ram(time_pre_str, "  ");
+        strcpypgm2ram(time_post_str, "\n  ");
+    } else {
+        hour = clock[CLOCK_HOURS] % 12;
+        if (hour == 0) {
+            hour = 12;
+        }
+        strcpypgm2ram(time_pre_str, " ");
+        strcpypgm2ram(time_post_str, clock[CLOCK_HOURS] < 12 ? " A\n\bM " : " P\n\bM ");
+    }
 
     // Calculate string for each display field
-    for (field = 0; field < CLOCK_DIALS; field++) {
+    for (field = 0; field < NUM_CLOCK_DIALS; field++) {
         dial = field_to_dial_lut[field];
         strcpypgm2ram(rev_str, field == selected_field ? VFD_REV_ON : "");
         strcpypgm2ram(unrev_str, field == selected_field ? VFD_REV_OFF : "");
-        sprintf(display_strings[field], "%s%0*u%s",
-                rev_str, clock_digits[dial], clock[dial] + clock_offsets[dial], unrev_str);
+        sprintf(display_strings[field],
+                dial == CLOCK_HOURS && clock[CONFIG_HR_FORMAT] == HR_FORMAT_12 ? "%s%*u%s" : "%s%0*u%s",
+                rev_str,
+                clock_digits[dial],
+                dial == CLOCK_HOURS ? hour : clock[dial] + clock_offsets[dial],
+                unrev_str);
     }
 
     // Print time
-    sprintf(msg_buff, VFD_HOME VFD_MAG_ON " %s:%s:%s\r\n" VFD_REV_OFF VFD_MAG_OFF,
-            display_strings[0], display_strings[1], display_strings[2]);
+    sprintf(msg_buff, VFD_HOME "%s" VFD_MAG_ON "%s:%s:%s" VFD_MAG_OFF "%s",
+            time_pre_str, display_strings[0], display_strings[1], display_strings[2], time_post_str);
     puts_vfd(msg_buff);
 
     // Print separator row
@@ -444,6 +485,22 @@ void print_clock(void)
     sprintf(msg_buff, "  %s-%s-%s (%s)",
             display_strings[3], display_strings[4], display_strings[5], dow_str);
     puts_vfd(msg_buff);
+}
+
+
+// Update the display
+
+void update_display(void)
+{
+    char cfg_str[12];
+
+    if (selected_field <= CLOCK_YEAR) {         // Not in setting mode or setting the clock
+        print_clock();
+    } else if (selected_field == CONFIG_HR_FORMAT) {
+        strcpypgm2ram(cfg_str, hour_formats[clock[CONFIG_HR_FORMAT]]);
+        sprintf(msg_buff, VFD_HOME "Hour Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        puts_vfd(msg_buff);
+    }
 }
 
 
@@ -474,8 +531,11 @@ void main(void)
         case ISR_ENTER_SETTING:
             strcpypgm2ram(msg_buff, VFD_SHORT_BLINK);
             break;
+        case ISR_CONFIG_SETTING:
+            strcpypgm2ram(msg_buff, VFD_CLS);
+            break;
         case ISR_EXIT_SETTING:
-            strcpypgm2ram(msg_buff, VFD_LONG_BLINK);
+            strcpypgm2ram(msg_buff, VFD_CLS VFD_LONG_BLINK);
             break;
         case ISR_SECONDS_FROZEN:
             strcpypgm2ram(msg_buff, VFD_FLASH_SCR_ON);
@@ -488,6 +548,7 @@ void main(void)
             sprintf(msg_buff, VFD_BRIGHTNESS "%c", vfd_dim ? 4 : 8);
             break;
         case ISR_SECOND_PASSED:
+        case ISR_CLOCK_SETTING:
         case ISR_SETTING_PRESS:
             *msg_buff = '\0';
             break;
@@ -497,7 +558,7 @@ void main(void)
         isr_event = ISR_NONE;
 
         // Update the display
-        print_clock();
+        update_display();
     }
 }
 
@@ -582,7 +643,7 @@ void timer0_isr(void)
     if (current_button_state) {                     // Currently pressed
         if (!last_button_state) {                   // Just pressed
             if (!IN_SETTING(selected_field) && sec_freeze) {    // Unfreeze seconds immediately
-                suppress_short_press = 1;          // Suppress short press action
+                suppress_short_press = 1;           // Suppress short press action
                 WriteTimer0(TIMER0_RELOAD);
                 second_tick_count = 0;
                 sec_freeze = 0;
@@ -620,7 +681,11 @@ void timer0_isr(void)
         selected_field++;                           // Advance to next field
         if (selected_field == 0) {
             isr_event = ISR_ENTER_SETTING;
-        } else if (selected_field == CLOCK_DIALS){
+        } else if (selected_field < NUM_CLOCK_DIALS) {
+            isr_event = ISR_CLOCK_SETTING;
+        } else if (selected_field < NUM_ALL_DIALS) {
+            isr_event = ISR_CONFIG_SETTING;
+        } else {
             selected_field = -1;                    // Exit setting mode
             if (clock[CLOCK_DAY] >= month_lengths[clock[CLOCK_MONTH]]) {
                 clock[CLOCK_DAY] = month_lengths[clock[CLOCK_MONTH]] - 1;
