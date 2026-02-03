@@ -11,15 +11,14 @@
 //=======================
 //
 // CPU clock:
-//  - Source: Internal Oscillator Block (8 MHz)
-//  - Postscaler: 1:1 -> Fosc = 8 MHz
+//  - Source: External Oscillator: 16 MHz TCXO -> Fosc = 16 MHz
 //
 // Peripheral modules:
 //
 //  - Timer 0:
 //     - Use: System tick timer
 //     - Clock source: Internal
-//     - Clock: 2 MHz @ Fosc = 8 MHz (prescaler: none)
+//     - Clock: 4 MHz @ Fosc = 16 MHz (prescaler: none)
 //     - Interrupt-on-Overflow: Yes
 //     - Interrupt priority: Single (only)
 //     - Mode: 16-bit
@@ -27,7 +26,7 @@
 //  - Timer 1:
 //     - Use: Delay time base
 //     - Clock source: Internal
-//     - Clock: 1 MHz @ Fosc = 8 MHz (prescaler: 1:2)
+//     - Clock: 1 MHz @ Fosc = 16 MHz (prescaler: 1:4)
 //     - Interrupt-on-Overflow: No
 //     - Mode: 16-bit
 //     - T1 Oscillator: Disabled
@@ -43,21 +42,24 @@
 //  - Master Synchronous Serial Port (MSSP):
 //     - Use: Serial interface to VFD
 //     - Feature: SPI
-//     - Clock: 500 kHz @ Fosc = 8 MHz (prescaler: 1/16, selected according to F_VFD_SPI_MAX)
+//     - Clock: 1 MHz @ Fosc = 16 MHz (prescaler: 1/16, selected according to F_VFD_SPI_MAX)
 //     - Mode: Master (selected clock prescaler ensures frequency not to exceed 1.5 MHz)
 //     - Bus Mode: 11 (CKP/CPOL=1 [High idle clock polarity]; CKE/CPHA=1 [Output on idle->active])
 //     - Input Sample Phase: Don't-care (set to SMP=0 [middle of data output period])
 //
 // Port bits:
 //
+//  - RA6 (OSC-O): CLKO (for frequency measurement)
+//  - RA7 (OSC-I): CLKI <- TCXO output
+//
 //  - RB1 (I): User Button (sampled)
 //
 //  - RC2 (O): Debug signal for testpoint (repurposed from legacy PCMF ring signal input)
-//  - RC3 (O/SPI-O): SPI SCK [Serial Clock] -> VFD: SCK input
+//  - RC3 (O/SPI-O): SPI SCK [Serial Clock] -> VFD SCK input
 //  - RC4 (I/SPI-I): SPI SDI [Serial Data In] (not used - see note below)
-//  - RC5 (O/SPI-O): SPI SDO [Serial Data Out] -> VFD: SIN input
-//  - RC6 (I): VFD Busy -> VFD: SBUSY output
-//  - RC7 (O): VFD Reset -> VFD: RESET input
+//  - RC5 (O/SPI-O): SPI SDO [Serial Data Out] -> VFD SIN input
+//  - RC6 (I): VFD Busy <- VFD SBUSY output
+//  - RC7 (O): VFD Reset -> VFD RESET input
 //
 //  - RD2 (O): Red LED
 //
@@ -70,9 +72,9 @@
 
 // Chip Configuration (overriding defaults)
 
-#pragma config OSC = INTIO67    // Internal oscillator, RA6&7 available (Default: RC)
+#pragma config OSC = EC         // External oscillator; RA6&7 not available (Default: RC)
 #pragma config PWRT = ON        // Power-on Timer enabled (Default: OFF)
-#pragma config WDTPS = 2048     // WD Timer postscaler -> 8 s (Default: 32768 -> 131 s)
+#pragma config WDTPS = 2048     // WD Timer postscaler -> 8 s (Default: 32768)
 #pragma config PBADEN = OFF     // PORTB A/D channels disabled (Default: ON)
 #pragma config LVP = OFF        // Single-supply ICSP disabled (Default: ON)
 
@@ -89,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "1.3.0"
+#define FW_VERSION          "2.0.0"
 
 // Customization
 
@@ -98,14 +100,14 @@
 
 // Fixed system parameters
 
-#define F_OSC               8000000UL                       // MCU oscillator frequency
+#define F_OSC               16000000UL                      // MCU oscillator frequency
 #define CLK_PER_INSTR       4                               // MCU clock cycles per instruction
 #define F_ICYCLE            (F_OSC / CLK_PER_INSTR)         // MCU instruction cycle frequency
-#define F_TICK              100                             // Timer 0 interrupt frequency (10 ms)
+#define F_TICK              100                             // Timer 0 interrupt frequency (period: 10 ms)
 #define F_VFD_SPI_MAX       1500000UL                       // VFD SPI max clock frequency (well within spec)
 #define VFD_RESET_PULSE_US  2000                            // VFD reset pulse duration [us]
 #define VFD_RESET_RECOV_US  5                               // VFD post-reset recovery time [us]
-#define TIMER0_RELOAD_CORR  486                             // Timer 0 reload value correction from DOE
+#define TIMER0_RELOAD_CORR  380                             // Timer 0 reload value correction from DOE
 #define TIMER0_PRESC_DIV    1                               // Timer 0 prescaler divider
 #define TIMER0_PRESC_CFG    T0_PS_1_1                       // Timer 0 prescaler config constant
 
@@ -321,11 +323,6 @@ void init_pic(void)
     TRISC = 0b01010000;     // Inputs: RC4 (SPI SDI), RC6 (VFD Busy)
     TRISD = 0b00000010;     // Inputs: RD1 (mfg. mistake: short to VFD Busy on PCB)
     TRISE = 0b00000000;
-
-    // Internal oscillator setup (Fosc = 8 MHz)
-    OSCCONbits.IRCF0 = 1;
-    OSCCONbits.IRCF1 = 1;
-    OSCCONbits.IRCF2 = 1;
 
     // Interrupt setup
     RCONbits.IPEN = 0;      // Single priority mode
