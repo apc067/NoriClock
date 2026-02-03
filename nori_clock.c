@@ -89,7 +89,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "1.2.0"
+#define FW_VERSION          "1.3.0"
 
 // Customization
 
@@ -111,7 +111,7 @@
 
 // Adjusted system parameters
 
-#if F_ICYCLE > F_VFD_SPI_MAX                               // SPI clock prescaler
+#if F_ICYCLE > F_VFD_SPI_MAX                                // SPI clock prescaler
 #define SPI_PRESC_CFG       SPI_FOSC_16
 #else
 #define SPI_PRESC_CFG       SPI_FOSC_4
@@ -158,6 +158,7 @@ enum {                                                      // Clock & config di
     CLOCK_MONTH,
     CLOCK_YEAR,
     CONFIG_HR_FORMAT,
+    CONFIG_DATE_FORMAT,
     NUM_ALL_DIALS
 };
 
@@ -172,6 +173,13 @@ enum {                                                      // Hour formats
     HR_FORMAT_24 = 0,
     HR_FORMAT_12,
     NUM_HR_FORMATS
+};
+
+enum {                                                      // Date formats
+    DATE_FORMAT_MDY = 0,
+    DATE_FORMAT_YMD,
+    DATE_FORMAT_DMY,
+    NUM_DATE_FORMATS
 };
 
 // ISR-related definitions
@@ -234,7 +242,7 @@ volatile byte sec_freeze = 1;                               // Seconds are froze
 volatile sbyte selected_field = 0;                          // Display field under setting (-1: not in setting mode)
 volatile byte clock[NUM_ALL_DIALS] = {
     0, 0, 0, 0, 0, 26,                                      // THE CLOCK: Seconds, minutes, hours, day, month, year
-    HR_FORMAT_24                                            // Config: Hour format
+    HR_FORMAT_24, DATE_FORMAT_MDY                           // Config: Hour format, date format
 };
 
 // Other global variables
@@ -246,11 +254,15 @@ char display_strings[NUM_CLOCK_DIALS][DISPLAY_STR_SIZE];    // Display field str
 
 byte clock_limits[NUM_ALL_DIALS] = {                        // Limit for each dial
     60, 60, 24, 0, 12, 100,                                 // Actual clock dials (with caveat for month)
-    NUM_HR_FORMATS                                          // Config dials
+    NUM_HR_FORMATS, NUM_DATE_FORMATS                        // Config dials
 };
-const rom byte field_to_dial_lut[NUM_ALL_DIALS] = {         // Display field to clock dial lookup
-    2, 1, 0, 4, 3, 5,
-    CONFIG_HR_FORMAT
+const rom byte field_to_dial_lut[NUM_DATE_FORMATS][NUM_ALL_DIALS] = {       // Display field to clock dial lookup
+    { 2, 1, 0, 4, 3, 5,                                         // MM-DD-YYYY
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT },
+    { 2, 1, 0, 5, 4, 3,                                         // YYYY-MM-DD
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT },
+    { 2, 1, 0, 3, 4, 5,                                         // DD-MM-YYYY
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT }
 };
 const rom byte clock_digits[NUM_CLOCK_DIALS] = {            // Number of digits to display for each clock dial
     2, 2, 2, 2, 2, 4
@@ -271,7 +283,12 @@ const rom char *dow_strings[] = {                           // Day-of-week strin
 
 // Configuration strings
 
-const rom char *hour_formats[] = { "24-hour", "12-hour" };  // Hour format strings
+const rom char *hour_formats[] = {                          // Hour format strings
+    "24-hour", "12-hour"
+};
+const rom char *date_formats[] = {                          // Date format strings
+    "MM-DD-YYYY", "YYYY-MM-DD", "DD-MM-YYYY"
+};
 
 
 //==============================
@@ -454,7 +471,7 @@ void print_clock(void)
 
     // Calculate string for each display field
     for (field = 0; field < NUM_CLOCK_DIALS; field++) {
-        dial = field_to_dial_lut[field];
+        dial = field_to_dial_lut[clock[CONFIG_DATE_FORMAT]][field];
         strcpypgm2ram(rev_str, field == selected_field ? VFD_REV_ON : "");
         strcpypgm2ram(unrev_str, field == selected_field ? VFD_REV_OFF : "");
         sprintf(display_strings[field],
@@ -500,6 +517,10 @@ void update_display(void)
         strcpypgm2ram(cfg_str, hour_formats[clock[CONFIG_HR_FORMAT]]);
         sprintf(msg_buff, VFD_HOME "Hour Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
         puts_vfd(msg_buff);
+    } else if (selected_field == CONFIG_DATE_FORMAT) {
+        strcpypgm2ram(cfg_str, date_formats[clock[CONFIG_DATE_FORMAT]]);
+        sprintf(msg_buff, VFD_HOME "Date Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        puts_vfd(msg_buff);
     }
 }
 
@@ -538,7 +559,7 @@ void main(void)
             strcpypgm2ram(msg_buff, VFD_CLS VFD_LONG_BLINK);
             break;
         case ISR_SECONDS_FROZEN:
-            strcpypgm2ram(msg_buff, VFD_FLASH_SCR_ON);
+            strcpypgm2ram(msg_buff, VFD_CLS VFD_FLASH_SCR_ON);
             break;
         case ISR_SECONDS_UNFROZEN:
             strcpypgm2ram(msg_buff, VFD_FLASH_SCR_OFF);
@@ -674,7 +695,7 @@ void timer0_isr(void)
             }
             suppress_short_press = 0;
         } else {
-            increment_clock(field_to_dial_lut[selected_field]);     // Adjust selected field's clock dial
+            increment_clock(field_to_dial_lut[clock[CONFIG_DATE_FORMAT]][selected_field]);
             isr_event = ISR_SETTING_PRESS;
         }
     } else if (button_action == BA_LONG_PRESS) {
