@@ -91,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "2.0.0"
+#define FW_VERSION          "2.1.0"
 
 // Customization
 
@@ -161,6 +161,7 @@ enum {                                                      // Clock & config di
     CLOCK_YEAR,
     CONFIG_HR_FORMAT,
     CONFIG_DATE_FORMAT,
+    CONFIG_DST_OPTION,
     NUM_ALL_DIALS
 };
 
@@ -182,6 +183,12 @@ enum {                                                      // Date formats
     DATE_FORMAT_YMD,
     DATE_FORMAT_DMY,
     NUM_DATE_FORMATS
+};
+
+enum {                                                      // DST options
+    DST_DISABLED = 0,
+    DST_ENABLED,
+    NUM_DST_OPTIONS
 };
 
 // ISR-related definitions
@@ -237,6 +244,15 @@ typedef unsigned char       byte;
 typedef char                sbyte;
 typedef unsigned int        word;
 
+// Main code global variables
+
+char msg_buff[MSG_BUFF_SIZE];                               // VFD message buffer
+char display_strings[NUM_CLOCK_DIALS][DISPLAY_STR_SIZE];    // Display field strings for each clock dial
+
+// ISR global variables
+
+volatile byte dst_status = 0;                               // Daylight Saving Time status (0: standard time, 1: DST)
+
 // Global variables modified in ISR & read in main code
 
 volatile byte isr_event = ISR_NONE;                         // ISR event indicator
@@ -244,52 +260,71 @@ volatile byte sec_freeze = 1;                               // Seconds are froze
 volatile sbyte selected_field = 0;                          // Display field under setting (-1: not in setting mode)
 volatile byte clock[NUM_ALL_DIALS] = {
     0, 0, 0, 0, 0, 26,                                      // THE CLOCK: Seconds, minutes, hours, day, month, year
-    HR_FORMAT_24, DATE_FORMAT_MDY                           // Config: Hour format, date format
+    HR_FORMAT_24, DATE_FORMAT_MDY, DST_ENABLED              // Config: Hour format, date format, DST option
 };
-
-// Other global variables
-
-char msg_buff[MSG_BUFF_SIZE];                               // VFD message buffer
-char display_strings[NUM_CLOCK_DIALS][DISPLAY_STR_SIZE];    // Display field strings for each clock dial
+volatile byte clock_dow = 4;                                // Day-of-week for current date (0: Sun, 1: Mon, ... 6: Sat)
 
 // Clock-related lookup tables (mostly read-only)
 
 byte clock_limits[NUM_ALL_DIALS] = {                        // Limit for each dial
     60, 60, 24, 0, 12, 100,                                 // Actual clock dials (with caveat for month)
-    NUM_HR_FORMATS, NUM_DATE_FORMATS                        // Config dials
+    NUM_HR_FORMATS, NUM_DATE_FORMATS, NUM_DST_OPTIONS       // Config dials
 };
+
 const rom byte field_to_dial_lut[NUM_DATE_FORMATS][NUM_ALL_DIALS] = {       // Display field to clock dial lookup
-    { 2, 1, 0, 4, 3, 5,                                         // MM-DD-YYYY
-      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT },
-    { 2, 1, 0, 5, 4, 3,                                         // YYYY-MM-DD
-      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT },
-    { 2, 1, 0, 3, 4, 5,                                         // DD-MM-YYYY
-      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT }
+    { 2, 1, 0, 4, 3, 5,                                                     //   MM-DD-YYYY
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT, CONFIG_DST_OPTION },
+    { 2, 1, 0, 5, 4, 3,                                                     //   YYYY-MM-DD
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT, CONFIG_DST_OPTION },
+    { 2, 1, 0, 3, 4, 5,                                                     //   DD-MM-YYYY
+      CONFIG_HR_FORMAT, CONFIG_DATE_FORMAT, CONFIG_DST_OPTION }
 };
+
 const rom byte clock_digits[NUM_CLOCK_DIALS] = {            // Number of digits to display for each clock dial
     2, 2, 2, 2, 2, 4
 };
+
 const rom word clock_offsets[NUM_CLOCK_DIALS] = {           // Offset to add to each clock dial for display
     0, 0, 0, 1, 1, YEAR_CENTURY * 100
 };
+
 byte month_lengths[NUM_MONTHS] = {                          // Days in each month (with caveat for February)
     31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
 };
-const rom byte month_offsets[2][NUM_MONTHS] = {             // Month offsets for day-of-week calculation
-    { 0, 3, 3, 6, 1, 4, 6, 2, 5, 0, 3, 5 },
-    { 0, 3, 4, 0, 2, 5, 0, 3, 6, 1, 4, 6 }
+
+const rom byte month_offsets[][NUM_MONTHS] = {              // Month offsets for day-of-week calculation
+    { 0, 3, 3, 6, 1, 4, 6, 2, 5, 0, 3, 5 },                 //   Regular year
+    { 0, 3, 4, 0, 2, 5, 0, 3, 6, 1, 4, 6 }                  //   Leap year
 };
+
 const rom char *dow_strings[] = {                           // Day-of-week strings
     "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 };
 
+// Daylight Saving definitions
+
+const rom struct {                                          // DST change rules
+    byte month;                                             //   Month (0-11)
+    byte dow;                                               //   Day-of-week (0: Sun, 1: Mon, ... 6: Sat)
+    byte dow_count;                                         //   Occurrence of day-of-week within the month
+    byte hour;                                              //   Hour
+} dst_rules[2] = {                                          // [0]: start, [1]: end
+    { 2, 0, 2, 2 },
+    { 10, 0, 1, 2 }
+};
+
 // Configuration strings
 
-const rom char *hour_formats[] = {                          // Hour format strings
+const rom char *hour_formats[NUM_HR_FORMATS] = {            // Hour format strings
     "24-hour", "12-hour"
 };
-const rom char *date_formats[] = {                          // Date format strings
+
+const rom char *date_formats[NUM_DATE_FORMATS] = {          // Date format strings
     "MM-DD-YYYY", "YYYY-MM-DD", "DD-MM-YYYY"
+};
+
+const rom char *dst_options[NUM_DST_OPTIONS] = {            // DST option strings
+    "Disabled", "Enabled "
 };
 
 
@@ -353,7 +388,7 @@ void init_vfd(void)
     PIN_VFDSIN = 0;
     PIN_VFDSCK = 1;
     delay_us(2000);
-    PIN_VFDRESET = 1;       // Release VFD from reset
+    PIN_VFDRESET = 1;
 
     // Recover from reset
     while (PIN_VFDBUSY)
@@ -445,7 +480,6 @@ void print_clock(void)
 {
     byte field, dial;
     byte col;
-    byte cent_year, dow_jan1, dow;
     byte hour;
     // Arguments for "%s" (must be in the data memory)
     char rev_str[4], unrev_str[4];
@@ -489,13 +523,8 @@ void print_clock(void)
         putc_vfd(col == clock[CLOCK_SECONDS] / (60 / VFD_COLS) ? '|' : '-');
     }
 
-    // Calculate day of week (Gauss's algorithm)
-    cent_year = clock[CLOCK_YEAR] - 1;
-    dow_jan1 = (1 + 5 * (cent_year % 4) + 3 * cent_year + 5 * (YEAR_CENTURY % 4)) % 7;
-    dow = (dow_jan1 + month_offsets[!(clock[CLOCK_YEAR] % 4)][clock[CLOCK_MONTH]] + clock[CLOCK_DAY]) % 7;
-    strcpypgm2ram(dow_str, dow_strings[dow]);
-
     // Print date
+    strcpypgm2ram(dow_str, dow_strings[clock_dow]);
     sprintf(msg_buff, "  %s-%s-%s (%s)",
             display_strings[3], display_strings[4], display_strings[5], dow_str);
     puts_vfd(msg_buff);
@@ -508,7 +537,7 @@ void update_display(void)
 {
     char cfg_str[12];
 
-    if (selected_field <= CLOCK_YEAR) {         // Not in setting mode or setting the clock
+    if (selected_field <= CLOCK_YEAR) {             // Not in setting mode or setting the clock
         print_clock();
     } else if (selected_field == CONFIG_HR_FORMAT) {
         strcpypgm2ram(cfg_str, hour_formats[clock[CONFIG_HR_FORMAT]]);
@@ -517,6 +546,10 @@ void update_display(void)
     } else if (selected_field == CONFIG_DATE_FORMAT) {
         strcpypgm2ram(cfg_str, date_formats[clock[CONFIG_DATE_FORMAT]]);
         sprintf(msg_buff, VFD_HOME "Date Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        puts_vfd(msg_buff);
+    } else if (selected_field == CONFIG_DST_OPTION) {
+        strcpypgm2ram(cfg_str, dst_options[clock[CONFIG_DST_OPTION]]);
+        sprintf(msg_buff, VFD_HOME "Daylight Saving:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
         puts_vfd(msg_buff);
     }
 }
@@ -536,7 +569,7 @@ void main(void)
     // Main loop
     while (1) {
         // Wait for an event
-        PIN_DEBUG = 1;            // Indicate idle state with a high level
+        PIN_DEBUG = 1;                              // Indicate idle state with a high level
         while (!isr_event)
             ;
         PIN_DEBUG = 0;
@@ -582,8 +615,60 @@ void main(void)
 
 
 //==============================
-// Interrupt Handling
+// Interrupt Context
 //==============================
+
+// Caluclate the current day-of-week & DST status
+//
+// Returns: DST status (0: standard time, 1: DST)
+
+byte calc_dow_and_dst(void)
+{
+    byte cent_year;
+    byte dow_jan1, dow_month1;
+    byte dst_day;
+    byte dst_case;
+
+    // Calculate day of week (Gauss's algorithm)
+    cent_year = clock[CLOCK_YEAR] - 1;
+    dow_jan1 = (1 + 5 * (cent_year % 4) + 3 * cent_year + 5 * (YEAR_CENTURY % 4)) % 7;
+    dow_month1 = (dow_jan1 + month_offsets[!(clock[CLOCK_YEAR] % 4)][clock[CLOCK_MONTH]]) % 7;
+    clock_dow = (dow_month1 + clock[CLOCK_DAY]) % 7;
+
+    // DST not enabled -> quick reject
+    if (clock[CONFIG_DST_OPTION] == DST_DISABLED) {
+        return 0;
+    }
+
+    // Trivial months
+    if (clock[CLOCK_MONTH] < dst_rules[0].month || clock[CLOCK_MONTH] > dst_rules[1].month) {
+        return 0;
+    } else if (clock[CLOCK_MONTH] > dst_rules[0].month && clock[CLOCK_MONTH] < dst_rules[1].month) {
+        return 1;
+    }
+
+    // Trivial days within changeover months
+    // Note: dst_case also represents the "before" DST status
+    if (clock[CLOCK_MONTH] == dst_rules[0].month) {
+        dst_case = 0;
+    } else {
+        dst_case = 1;
+    }
+    dst_day = (dst_rules[dst_case].dow - dow_month1) % 7 + (dst_rules[dst_case].dow_count - 1) * 7;
+    if (clock[CLOCK_DAY] < dst_day) {
+        return dst_case;
+    } else if (clock[CLOCK_DAY] > dst_day) {
+        return !dst_case;
+    }
+
+    // Changeover days
+    if (clock[CLOCK_HOURS] < dst_rules[dst_case].hour) {
+        return dst_case;
+    } else {
+        return !dst_case;
+    }
+}
+
 
 // Increment the clock dials(s)
 //
@@ -592,6 +677,7 @@ void main(void)
 void increment_clock(sbyte set_dial)
 {
     byte dial, start_dial, end_dial;
+    static byte prev_dst_status = 0;
 
     // Setup
     month_lengths[MONTH_FEBRUARY] = month_length_feb();
@@ -621,9 +707,29 @@ void increment_clock(sbyte set_dial)
     }
 
     // Recalculate February day limit if year is adjusted in setting mode
-    // (Note: month adjustment will not affect day value until exiting setting mode)
+    // Note: Month adjustment will not affect day value until exiting setting mode
     if (set_dial == CLOCK_YEAR) {
         month_lengths[MONTH_FEBRUARY] = month_length_feb();
+    }
+
+    // Handle DST
+    // Notes:
+    //  - In setting mode the hours are be adjusted, even if the clock is still ticking
+    //    (DST status will be updated upon exiting setting mode)
+    //  - It is assumed that the DST hour-adjustment never crosses a day boundary
+    if (dial >= CLOCK_HOURS) {                      // Hours or above have changed
+        prev_dst_status = dst_status;
+        dst_status = calc_dow_and_dst();
+        if (!IN_SETTING(selected_field)) {
+            PIN_LED = dst_status;
+            if (dst_status != prev_dst_status) {
+                if (dst_status == 1) {
+                    clock[CLOCK_HOURS]++;
+                } else {
+                    clock[CLOCK_HOURS]--;
+                }
+            }
+        }
     }
 }
 
@@ -642,7 +748,7 @@ void timer0_isr(void)
 
     // Start the ISR
     WriteTimer0(TIMER0_RELOAD);
-    PIN_DEBUG = ~PIN_DEBUG;                  // "In ISR" inverse pulse
+    PIN_DEBUG = ~PIN_DEBUG;                         // "In ISR" inverse pulse
     INTCONbits.TMR0IF = 0;
     button_action = BA_NONE;
 
@@ -708,6 +814,8 @@ void timer0_isr(void)
             if (clock[CLOCK_DAY] >= month_lengths[clock[CLOCK_MONTH]]) {
                 clock[CLOCK_DAY] = month_lengths[clock[CLOCK_MONTH]] - 1;
             }
+            dst_status = calc_dow_and_dst();
+            PIN_LED = dst_status;
             if (sec_freeze) {
                 isr_event = ISR_SECONDS_FROZEN;
             } else {
