@@ -43,7 +43,7 @@
 //     - Use: Serial interface to VFD
 //     - Feature: SPI
 //     - Clock: 1 MHz @ Fosc = 16 MHz (prescaler: 1/16, selected according to F_VFD_SPI_MAX)
-//     - Mode: Master (selected clock prescaler ensures frequency not to exceed 1.5 MHz)
+//     - Mode: Master
 //     - Bus Mode: 11 (CKP/CPOL=1 [High idle clock polarity]; CKE/CPHA=1 [Output on idle->active])
 //     - Input Sample Phase: Don't-care (set to SMP=0 [middle of data output period])
 //
@@ -61,7 +61,7 @@
 //  - RC6 (I): VFD Busy <- VFD SBUSY output
 //  - RC7 (O): VFD Reset -> VFD RESET input
 //
-//  - RD2 (O): Red LED
+//  - RD2 (O): DST indicator LED
 //
 // Note: The VFD does not send data, therefore it doesn't even have a MISO line, but the PIC's SPI
 //       module configures RC4 as input. To prevent floating, it is grounded on the PCB.
@@ -141,7 +141,7 @@
 #define PIN_VFDSIN          PORTCbits.RC5                   // VFD SPI MOSI output (initially GPIO)
 #define PIN_VFDBUSY         PORTCbits.RC6                   // VFD busy signal input
 #define PIN_VFDRESET        PORTCbits.RC7                   // VFD reset output (active low)
-#define PIN_LED             PORTDbits.RD2                   // Red LED output
+#define PIN_LED             PORTDbits.RD2                   // DST indicator LED output
 
 // Timer-related calculations
 
@@ -153,6 +153,7 @@
 // Clock-related definitions
 
 enum {                                                      // Clock & config dials
+    FULL_CLOCK = -1,
     CLOCK_SECONDS = 0,
     CLOCK_MINUTES,
     CLOCK_HOURS,
@@ -169,6 +170,14 @@ enum {                                                      // Clock & config di
 #define NUM_MONTHS          12
 #define MONTH_FEBRUARY      1
 #define YEAR_CENTURY        20
+
+// Field-related definitions
+
+#define FIELD_NONE          -1
+#define NUM_CLOCK_FIELDS    NUM_CLOCK_DIALS
+#define NUM_ALL_FIELDS      NUM_ALL_DIALS
+
+#define IN_SETTING(f)       ((f) != FIELD_NONE)             // Check if in setting mode
 
 // Configuration-related definitions
 
@@ -235,8 +244,6 @@ enum {                                                      // Button actions
 
 #define MSG_BUFF_SIZE       64                              // VFD message buffer size
 #define DISPLAY_STR_SIZE    20                              // Display field string size for each clock dial
-
-#define IN_SETTING(f)       ((f) != -1)                     // Check if in setting mode
 
 // Typedefs
 
@@ -537,7 +544,7 @@ void update_display(void)
 {
     char cfg_str[12];
 
-    if (selected_field <= CLOCK_YEAR) {             // Not in setting mode or setting the clock
+    if (selected_field < NUM_CLOCK_FIELDS) {        // Not in setting mode or setting the clock
         print_clock();
     } else if (selected_field == CONFIG_HR_FORMAT) {
         strcpypgm2ram(cfg_str, hour_formats[clock[CONFIG_HR_FORMAT]]);
@@ -670,11 +677,11 @@ byte calc_dow_and_dst(void)
 }
 
 
-// Increment the clock dials(s)
+// Advance the clock dials(s)
 //
-// sbyte set_dial: Clock dial being adjusted in setting mode (-1: regular clock increment)
+// sbyte adv_dial: Full clock advance (-1) vs. clock dial advanced in setting mode (>=0)
 
-void increment_clock(sbyte set_dial)
+void advance_clock(sbyte adv_dial)
 {
     byte dial, start_dial, end_dial;
     static byte prev_dst_status = 0;
@@ -683,12 +690,12 @@ void increment_clock(sbyte set_dial)
     month_lengths[MONTH_FEBRUARY] = month_length_feb();
     clock_limits[CLOCK_DAY] = month_lengths[clock[CLOCK_MONTH]];
 
-    if (IN_SETTING(set_dial)) {
-        start_dial = set_dial;
-        end_dial = set_dial;
-    } else {
+    if (adv_dial == FULL_CLOCK) {
         start_dial = CLOCK_SECONDS;
         end_dial = CLOCK_YEAR;
+    } else {
+        start_dial = adv_dial;
+        end_dial = adv_dial;
     }
 
     // Turn the dial(s)
@@ -702,13 +709,13 @@ void increment_clock(sbyte set_dial)
     }
 
     // Freeze seconds if adjusted in setting mode
-    if (set_dial == CLOCK_SECONDS) {
+    if (adv_dial == CLOCK_SECONDS) {
         sec_freeze = 1;
     }
 
     // Recalculate February day limit if year is adjusted in setting mode
     // Note: Month adjustment will not affect day value until exiting setting mode
-    if (set_dial == CLOCK_YEAR) {
+    if (adv_dial == CLOCK_YEAR) {
         month_lengths[MONTH_FEBRUARY] = month_length_feb();
     }
 
@@ -758,7 +765,7 @@ void timer0_isr(void)
         second_tick_count = 0;
         isr_event = ISR_SECOND_PASSED;
         if (!sec_freeze) {
-            increment_clock(-1);
+            advance_clock(FULL_CLOCK);
         }
     }
 
@@ -798,19 +805,19 @@ void timer0_isr(void)
             }
             suppress_short_press = 0;
         } else {
-            increment_clock(field_to_dial_lut[clock[CONFIG_DATE_FORMAT]][selected_field]);
+            advance_clock(field_to_dial_lut[clock[CONFIG_DATE_FORMAT]][selected_field]);
             isr_event = ISR_SETTING_PRESS;
         }
     } else if (button_action == BA_LONG_PRESS) {
         selected_field++;                           // Advance to next field
         if (selected_field == 0) {
             isr_event = ISR_ENTER_SETTING;
-        } else if (selected_field < NUM_CLOCK_DIALS) {
+        } else if (selected_field < NUM_CLOCK_FIELDS) {
             isr_event = ISR_CLOCK_SETTING;
-        } else if (selected_field < NUM_ALL_DIALS) {
+        } else if (selected_field < NUM_ALL_FIELDS) {
             isr_event = ISR_CONFIG_SETTING;
         } else {
-            selected_field = -1;                    // Exit setting mode
+            selected_field = FIELD_NONE;            // Exit setting mode
             if (clock[CLOCK_DAY] >= month_lengths[clock[CLOCK_MONTH]]) {
                 clock[CLOCK_DAY] = month_lengths[clock[CLOCK_MONTH]] - 1;
             }
