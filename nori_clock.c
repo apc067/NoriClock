@@ -91,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "2.1.0"
+#define FW_VERSION          "2.2.0"
 
 // Customization
 
@@ -107,7 +107,7 @@
 #define F_VFD_SPI_MAX       1500000UL                       // VFD SPI max clock frequency (well within spec)
 #define VFD_RESET_PULSE_US  2000                            // VFD reset pulse duration [us]
 #define VFD_RESET_RECOV_US  5                               // VFD post-reset recovery time [us]
-#define TIMER0_RELOAD_CORR  380                             // Timer 0 reload value correction from DOE
+#define TIMER0_RELOAD_CORR  9                               // Timer 0 reload value correction from DOE
 #define TIMER0_PRESC_DIV    1                               // Timer 0 prescaler divider
 #define TIMER0_PRESC_CFG    T0_PS_1_1                       // Timer 0 prescaler config constant
 
@@ -148,6 +148,8 @@
 #define F_TIMER0            (F_ICYCLE / TIMER0_PRESC_DIV)   // Timer 0 frequency
 #define TIMER0_RELOAD_CALC  (0x10000 - (F_TIMER0 / F_TICK)) // Calculated Timer 0 reload value
 #define TIMER0_RELOAD       (TIMER0_RELOAD_CALC + TIMER0_RELOAD_CORR)   // Corrected Timer 0 reload value
+#define TIMER0_RELOAD_HI    (TIMER0_RELOAD / 256)           // Timer 0 reload high byte
+#define TIMER0_RELOAD_LO    (TIMER0_RELOAD % 256)           // Timer 0 reload low byte
 #define LONG_PRESS_TICK     (LONG_PRESS_MS / (1000 / F_TICK))           // Min long button press ticks
 
 // Clock-related definitions
@@ -754,7 +756,6 @@ void timer0_isr(void)
     byte button_action;
 
     // Start the ISR
-    WriteTimer0(TIMER0_RELOAD);
     PIN_DEBUG = ~PIN_DEBUG;                         // "In ISR" inverse pulse
     INTCONbits.TMR0IF = 0;
     button_action = BA_NONE;
@@ -836,11 +837,25 @@ void timer0_isr(void)
 }
 
 
+// Reload Timer 0 before the compiler-generated ISR context save
+
+void timer0_isr_preamble(void)
+{
+    _asm
+        movlw   TIMER0_RELOAD_HI
+        movwf   TMR0H,0
+        movlw   TIMER0_RELOAD_LO
+        movwf   TMR0L,0
+        GOTO    timer0_isr
+    _endasm
+}
+
+
 // Interrupt Vector
 
 #pragma code high_vector = 0x08
 void timer0_isr_vector(void)
 {
-    _asm GOTO timer0_isr _endasm
+    _asm GOTO timer0_isr_preamble _endasm
 }
 #pragma code
