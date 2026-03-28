@@ -21,6 +21,7 @@ The firmware can be built in **MPLAB IDE v8.92**, using the provided MCP-file.
 * 2.0.0 - Switch to 16 MHz TCXO external oscillator
 * 2.1.0 - Add DST auto-adjustment option
 * 2.2.0 - Reload Timer 0 before compiler-managed ISR context save
+* 2.3.0 - Add more display modes
 
 ## Author Info
 

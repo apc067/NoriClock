@@ -91,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "2.2.0"
+#define FW_VERSION          "2.3.0"
 
 // Customization
 
@@ -202,6 +202,18 @@ enum {                                                      // DST options
     NUM_DST_OPTIONS
 };
 
+// Display-related definitions
+
+enum {                                                      // Display modes
+    DISP_NORMAL_BRIGHT = 0,
+    DISP_NORMAL_DIMMED,
+    DISP_INVERTED_BRIGHT,       // For pixel health recovery
+    DISP_INVERTED_DIMMED,
+    DISP_FULL_ON,               // For pixel health testing
+    DISP_FULL_OFF,              // For complete darkness; filaments powered off
+    NUM_DISP_MODES
+};
+
 // ISR-related definitions
 
 enum {                                                      // ISR events
@@ -227,15 +239,20 @@ enum {                                                      // Button actions
 
 #define VFD_CLS             "\x0c"                          // Clear screen
 #define VFD_HOME            "\x0b"                          // Home cursor, without clear screen
-#define VFD_MAG_ON          "\x1f(g@\x02\x02"               // Magnified font on
+#define VFD_VERT_MAG_ON     "\x1f(g@\x01\x02"               // Vertically magnified font on
+#define VFD_FULL_MAG_ON     "\x1f(g@\x02\x02"               // Fully magnified font on
 #define VFD_MAG_OFF         "\x1f(g@\x01\x01"               // Magnified font off
-#define VFD_REV_ON          "\x1fr\x01"                     // Reverse font on
-#define VFD_REV_OFF         "\x1fr\xff"                     // Reverse font off
-#define VFD_SHORT_BLINK     "\x1f(a\x11\x02\x02\x02\x01"    // One short reverse-flash
-#define VFD_LONG_BLINK      "\x1f(a\x11\x02\x02\x02\x03"    // Three short reverse-flashes
+#define VFD_REV_ON          "\x1fr\x01"                     // Inverted font on
+#define VFD_REV_OFF         "\x1fr\xff"                     // Inverted font off
+#define VFD_SHORT_BLINK     "\x1f(a\x11\x02\x02\x02\x01"    // One short flash
+#define VFD_LONG_BLINK      "\x1f(a\x11\x02\x02\x02\x03"    // Three short flashes
 #define VFD_FLASH_SCR_ON    "\x1f(a\x11\x01\x23\x23\xff"    // Turn on screen-flashing
 #define VFD_FLASH_SCR_OFF   "\x1f(a\x11\xff\x1\x1\xff"      // Turn off screen-flashing
-#define VFD_BRIGHTNESS      "\x1fX"                         // Brightness control
+#define VFD_POWER_ON        "\x1f(a@\x01"                   // Power on (filaments on)
+#define VFD_POWER_OFF       "\x1f(a@\xff"                   // Power off (filaments off)
+#define VFD_ALL_PIXELS      "\x1f(a@\x03"                   // All pixels lit
+#define VFD_BRIGHT          "\x1fX\x08"                     // Maximum brightness
+#define VFD_DIM             "\x1fX\x02"                     // Dimmed brightness
 
 // VFD geometry
 
@@ -257,6 +274,7 @@ typedef unsigned int        word;
 
 char msg_buff[MSG_BUFF_SIZE];                               // VFD message buffer
 char display_strings[NUM_CLOCK_DIALS][DISPLAY_STR_SIZE];    // Display field strings for each clock dial
+byte display_mode = DISP_NORMAL_BRIGHT;                     // Current display mode
 
 // ISR global variables
 
@@ -463,7 +481,7 @@ void splash_screen(void)
 {
     byte ctdn = SPLASH_SCREEN_S;
 
-    puts_vfd(strcpypgm2ram(msg_buff, VFD_CLS VFD_MAG_ON "Nori Clock" VFD_MAG_OFF));
+    puts_vfd(strcpypgm2ram(msg_buff, VFD_CLS VFD_FULL_MAG_ON "Nori Clock" VFD_MAG_OFF));
     puts_vfd(strcpypgm2ram(msg_buff, "   by Nixiana.com   "));
     puts_vfd(strcpypgm2ram(msg_buff, "  FW Version " FW_VERSION));
     while (ctdn--) {
@@ -493,20 +511,21 @@ void print_clock(void)
     // Arguments for "%s" (must be in the data memory)
     char rev_str[4], unrev_str[4];
     char dow_str[4];
-    char time_pre_str[4], time_post_str[8];
+    char time_pre_str[16], time_post_str[32];
 
     // Handle the hour format
     if (clock[CONFIG_HR_FORMAT] == HR_FORMAT_24) {
         hour = clock[CLOCK_HOURS];
-        strcpypgm2ram(time_pre_str, "  ");
-        strcpypgm2ram(time_post_str, "\n  ");
+        strcpypgm2ram(time_pre_str, VFD_FULL_MAG_ON " ");
+        strcpypgm2ram(time_post_str," " VFD_MAG_OFF);
     } else {
         hour = clock[CLOCK_HOURS] % 12;
         if (hour == 0) {
             hour = 12;
         }
-        strcpypgm2ram(time_pre_str, " ");
-        strcpypgm2ram(time_post_str, clock[CLOCK_HOURS] < 12 ? " A\n\bM " : " P\n\bM ");
+        strcpypgm2ram(time_pre_str, VFD_VERT_MAG_ON " " VFD_FULL_MAG_ON);
+        strcpypgm2ram(time_post_str, clock[CLOCK_HOURS] < 12 ? VFD_VERT_MAG_ON " " VFD_MAG_OFF "A \n\b\bM "
+                                                             : VFD_VERT_MAG_ON " " VFD_MAG_OFF "P \n\b\bM ");
     }
 
     // Calculate string for each display field
@@ -523,7 +542,7 @@ void print_clock(void)
     }
 
     // Print time
-    sprintf(msg_buff, VFD_HOME "%s" VFD_MAG_ON "%s:%s:%s" VFD_MAG_OFF "%s",
+    sprintf(msg_buff, VFD_HOME "%s%s:%s:%s%s",
             time_pre_str, display_strings[0], display_strings[1], display_strings[2], time_post_str);
     puts_vfd(msg_buff);
 
@@ -534,7 +553,7 @@ void print_clock(void)
 
     // Print date
     strcpypgm2ram(dow_str, dow_strings[clock_dow]);
-    sprintf(msg_buff, "  %s-%s-%s (%s)",
+    sprintf(msg_buff, "  %s-%s-%s (%s)  ",
             display_strings[3], display_strings[4], display_strings[5], dow_str);
     puts_vfd(msg_buff);
 }
@@ -546,19 +565,21 @@ void update_display(void)
 {
     char cfg_str[12];
 
-    if (selected_field < NUM_CLOCK_FIELDS) {        // Not in setting mode or setting the clock
-        print_clock();
+    if (selected_field < NUM_CLOCK_FIELDS) {
+        if (IN_SETTING(selected_field) || display_mode < DISP_FULL_ON) {
+            print_clock();
+        }
     } else if (selected_field == CONFIG_HR_FORMAT) {
         strcpypgm2ram(cfg_str, hour_formats[clock[CONFIG_HR_FORMAT]]);
-        sprintf(msg_buff, VFD_HOME "Hour Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        sprintf(msg_buff, VFD_HOME "Hour Format:\r\n\n" VFD_FULL_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
         puts_vfd(msg_buff);
     } else if (selected_field == CONFIG_DATE_FORMAT) {
         strcpypgm2ram(cfg_str, date_formats[clock[CONFIG_DATE_FORMAT]]);
-        sprintf(msg_buff, VFD_HOME "Date Format:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        sprintf(msg_buff, VFD_HOME "Date Format:\r\n\n" VFD_FULL_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
         puts_vfd(msg_buff);
     } else if (selected_field == CONFIG_DST_OPTION) {
         strcpypgm2ram(cfg_str, dst_options[clock[CONFIG_DST_OPTION]]);
-        sprintf(msg_buff, VFD_HOME "Daylight Saving:\r\n\n" VFD_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
+        sprintf(msg_buff, VFD_HOME "Daylight Saving:\r\n\n" VFD_FULL_MAG_ON "%s" VFD_MAG_OFF, cfg_str);
         puts_vfd(msg_buff);
     }
 }
@@ -569,6 +590,7 @@ void update_display(void)
 void main(void)
 {
     byte vfd_dim = 0;
+    byte reconfig_display = 0;
 
     // Startup
     init_pic();
@@ -589,33 +611,43 @@ void main(void)
         // Give visual feedback for the event
         switch (isr_event) {
         case ISR_ENTER_SETTING:
-            strcpypgm2ram(msg_buff, VFD_SHORT_BLINK);
+            strcpypgm2ram(msg_buff, VFD_POWER_ON VFD_BRIGHT VFD_REV_OFF VFD_SHORT_BLINK);
             break;
         case ISR_CONFIG_SETTING:
             strcpypgm2ram(msg_buff, VFD_CLS);
             break;
         case ISR_EXIT_SETTING:
             strcpypgm2ram(msg_buff, VFD_CLS VFD_LONG_BLINK);
+            reconfig_display = 1;
             break;
         case ISR_SECONDS_FROZEN:
             strcpypgm2ram(msg_buff, VFD_CLS VFD_FLASH_SCR_ON);
             break;
         case ISR_SECONDS_UNFROZEN:
             strcpypgm2ram(msg_buff, VFD_FLASH_SCR_OFF);
+            reconfig_display = 1;
             break;
         case ISR_REGULAR_PRESS:
-            vfd_dim = !vfd_dim;
-            sprintf(msg_buff, VFD_BRIGHTNESS "%c", vfd_dim ? 4 : 8);
-            break;
+            display_mode = (display_mode + 1) % NUM_DISP_MODES;
+            reconfig_display = 1;
+            // Fall-through intentional
         case ISR_SECOND_PASSED:
         case ISR_CLOCK_SETTING:
         case ISR_SETTING_PRESS:
             *msg_buff = '\0';
             break;
-
         }
         puts_vfd(msg_buff);
         isr_event = ISR_NONE;
+
+        // Reconfigure the display per the selected mode
+        if (reconfig_display) {
+            puts_vfd(strcpypgm2ram(msg_buff, display_mode % 2 ? VFD_DIM : VFD_BRIGHT));
+            puts_vfd(strcpypgm2ram(msg_buff, display_mode >= DISP_INVERTED_BRIGHT ? VFD_REV_ON : VFD_REV_OFF));
+            puts_vfd(strcpypgm2ram(msg_buff, display_mode == DISP_FULL_OFF ? VFD_POWER_OFF : VFD_POWER_ON));
+            puts_vfd(strcpypgm2ram(msg_buff, display_mode == DISP_FULL_ON ? VFD_ALL_PIXELS : ""));
+            reconfig_display = 0;
+        }
 
         // Update the display
         update_display();
@@ -723,7 +755,7 @@ void advance_clock(sbyte adv_dial)
 
     // Handle DST
     // Notes:
-    //  - In setting mode the hours are be adjusted, even if the clock is still ticking
+    //  - In setting mode NO adjustment is made, even if the clock is still ticking
     //    (DST status will be updated upon exiting setting mode)
     //  - It is assumed that the DST hour-adjustment never crosses a day boundary
     if (dial >= CLOCK_HOURS) {                      // Hours or above have changed
