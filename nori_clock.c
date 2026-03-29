@@ -91,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "2.3.0"
+#define FW_VERSION          "2.3.1"
 
 // Customization
 
@@ -312,7 +312,7 @@ const rom byte clock_digits[NUM_CLOCK_DIALS] = {            // Number of digits 
 };
 
 const rom word clock_offsets[NUM_CLOCK_DIALS] = {           // Offset to add to each clock dial for display
-    0, 0, 0, 1, 1, YEAR_CENTURY * 100
+    0, 0, 0, 1, 1, (word)YEAR_CENTURY * 100
 };
 
 byte month_lengths[NUM_MONTHS] = {                          // Days in each month (with caveat for February)
@@ -671,8 +671,8 @@ byte calc_dow_and_dst(void)
     byte dst_case;
 
     // Calculate day of week (Gauss's algorithm)
-    cent_year = clock[CLOCK_YEAR] - 1;
-    dow_jan1 = (1 + 5 * (cent_year % 4) + 3 * cent_year + 5 * (YEAR_CENTURY % 4)) % 7;
+    cent_year = (clock[CLOCK_YEAR] ? clock[CLOCK_YEAR] : 5) - 1;  // ?: -> Year 2000 fix, for sake of completeness
+    dow_jan1 = (1 + 5 * (cent_year % 4) + 3 * (word)cent_year + 5 * (YEAR_CENTURY % 4)) % 7;
     dow_month1 = (dow_jan1 + month_offsets[!(clock[CLOCK_YEAR] % 4)][clock[CLOCK_MONTH]]) % 7;
     clock_dow = (dow_month1 + clock[CLOCK_DAY]) % 7;
 
