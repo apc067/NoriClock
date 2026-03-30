@@ -23,6 +23,7 @@ The firmware can be built in **MPLAB IDE v8.92**, using the provided MCP-file.
 * 2.2.0 - Reload Timer 0 before compiler-managed ISR context save
 * 2.3.0 - Add more display modes
 * 2.3.1 - Disable integer promotions
+* 2.3.2 - Calculate initial DOW instead of hardcoding
 
 ## Author Info
 

@@ -91,7 +91,7 @@
 
 // Firmware version
 
-#define FW_VERSION          "2.3.1"
+#define FW_VERSION          "2.3.2"
 
 // Customization
 
@@ -289,7 +289,7 @@ volatile byte clock[NUM_ALL_DIALS] = {
     0, 0, 0, 0, 0, 26,                                      // THE CLOCK: Seconds, minutes, hours, day, month, year
     HR_FORMAT_24, DATE_FORMAT_MDY, DST_ENABLED              // Config: Hour format, date format, DST option
 };
-volatile byte clock_dow = 4;                                // Day-of-week for current date (0: Sun, 1: Mon, ... 6: Sat)
+volatile byte clock_dow;                                    // Day-of-week for current date (0: Sun, 1: Mon, ... 6: Sat)
 
 // Clock-related lookup tables (mostly read-only)
 
@@ -353,6 +353,8 @@ const rom char *date_formats[NUM_DATE_FORMATS] = {          // Date format strin
 const rom char *dst_options[NUM_DST_OPTIONS] = {            // DST option strings
     "Disabled", "Enabled "
 };
+
+byte calc_dow_and_dst(void);
 
 
 //==============================
@@ -596,6 +598,7 @@ void main(void)
     init_pic();
     init_vfd();
     splash_screen();
+    calc_dow_and_dst();
 
     // Main loop
     while (1) {
@@ -659,9 +662,11 @@ void main(void)
 // Interrupt Context
 //==============================
 
-// Caluclate the current day-of-week & DST status
+// Calculate the current day-of-week & DST status
 //
 // Returns: DST status (0: standard time, 1: DST)
+//
+// Note: Also called after boot for the initial DOW
 
 byte calc_dow_and_dst(void)
 {
